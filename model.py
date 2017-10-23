@@ -6,7 +6,7 @@ from distributions import Product
 
 class InfoGAN(object):
     def __init__(
-            self, z_distributions, c_distributions,
+            self, label, z_distributions, c_distributions,
             batch_size, reg_rate,
             image_size, channel_size, q_hidden_size,
             g_filter_number, d_filter_number,
@@ -15,6 +15,7 @@ class InfoGAN(object):
         self._initialzier = tf.truncated_normal_initializer(stddev=0.002)
 
         # basic hyperparameters
+        self.label = label
         self.z_distribution = Product([d for d in z_distributions])
         self.c_distribution = Product([d for d in c_distributions])
         self.latent_distribution = Product([
@@ -85,6 +86,21 @@ class InfoGAN(object):
         self.g_vars = [v for v in tf.trainable_variables() if 'g_' in v.name]
         self.d_vars = [v for v in tf.trainable_variables() if 'd_' in v.name]
         self.q_vars = [v for v in tf.trainable_variables() if 'q_' in v.name]
+
+    @property
+    def name(self):
+        return (
+            'InfoGAN'
+            '-{g_filter_number}g'
+            '-{d_filter_number}d'
+            '-{label}-{size}x{size}x{channels}'
+        ).format(
+            g_filter_number=self.g_filter_number,
+            d_filter_number=self.d_filter_number,
+            label=self.label,
+            size=self.image_size,
+            channels=self.channel_size
+        )
 
     def generator(self, z, c):
         # project zc

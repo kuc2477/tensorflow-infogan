@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+import os.path
 import copy
 import json
 import argparse
@@ -6,9 +8,23 @@ from data import DATASETS
 from model import InfoGAN
 from train import train
 from distributions import DISTRIBUTIONS
+import utils
 
 
-parser = argparse.ArgumentParser('InfoGAN CLI')
+parser = argparse.ArgumentParser('TensorFlow implementation of InfoGAN')
+parser.add_argument(
+    '--dataset', default='mnist',
+    help='dataset to use {}'.format(DATASETS.keys())
+)
+parser.add_argument(
+    '--resize', action='store_true',
+    help='whether to resize images on the fly or not'
+)
+parser.add_argument(
+    '--crop', action='store_false',
+    help='whether to use crop for image resizing or not'
+)
+
 parser.add_argument(
     '--z-size', type=int, dest='z_sizes',
     action='append', nargs='+',
@@ -61,43 +77,36 @@ parser.add_argument(
     '--q-hidden-size', type=int, default=128,
     help='posterior latent code approximator network\'s hidden layer size'
 )
+
 parser.add_argument(
-    '--learning-rate', type=float, default=0.00002,
-    help='learning rate for Adam [0.00002]'
+    '--learning-rate', type=float, default=2e-5,
+    help='learning rate for Adam [2e-5]'
 )
 parser.add_argument(
     '--beta1', type=float, default=0.5,
     help='momentum term of Adam [0.5]')
 parser.add_argument(
-    '--dataset', default='mnist',
-    help='dataset to use {}'.format(DATASETS.keys())
+    '--epochs', type=int, default=10,
+    help='training epoch number'
 )
 parser.add_argument(
-    '--resize', action='store_true',
-    help='whether to resize images on the fly or not'
-)
-parser.add_argument(
-    '--crop', action='store_false',
-    help='whether to use crop for image resizing or not'
-)
-parser.add_argument(
-    '--iterations', type=int, default=5000,
-    help='training iteration number'
-)
-parser.add_argument(
-    '--batch-size', type=int, default=64,
+    '--batch-size', type=int, default=32,
     help='training batch size'
 )
 parser.add_argument(
-    '--sample-size', type=int, default=36,
+    '--sample-size', type=int, default=32,
     help='generator sample size'
 )
 parser.add_argument(
-    '--log-for-every', type=int, default=10,
-    help='number of batches per logging'
+    '--statistics-log-interval', type=int, default=30,
+    help='number of batches per scalar logging'
 )
 parser.add_argument(
-    '--save-for-every', type=int, default=1000,
+    '--image-log-interval', type=int, default=300,
+    help='number of batches per image logging'
+)
+parser.add_argument(
+    '--checkpoint-interval', type=int, default=1000,
     help='number of batches per saving the model'
 )
 parser.add_argument(
@@ -108,20 +117,31 @@ parser.add_argument(
     )
 )
 parser.add_argument(
-    '--test', action='store_true',
-    help='flag defining whether it is in test mode'
-)
-parser.add_argument(
     '--sample-dir', default='figures',
     help='directory of generated figures'
 )
 parser.add_argument(
-    '--model-dir', default='checkpoints',
+    '--checkpoint-dir', default='checkpoints',
     help='directory of trained models'
+)
+parser.add_argument(
+    '--log-dir', default='logs',
+    help='directory of summaries'
+)
+parser.add_argument('--resume', action='store_true')
+
+main_command = parser.add_mutually_exclusive_group(required=True)
+main_command.add_argument(
+    '--test', action='store_false', dest='train',
+    help='flag defining whether it is in test mode'
+)
+main_command.add_argument(
+    '--train', action='store_true',
+    help='flag defining whether it is in train mode'
 )
 
 
-def _patch_dataset_specific_options(args):
+def _patch_dataset_specific_configs(args):
     dataset_config = DATASETS[args.dataset]
 
     # patch dataset specific image & channel_size
@@ -159,56 +179,59 @@ def _patch_with_concrete_distributions(args):
 
 def main(_):
     # patch and display flags with dataset's width and height
-    raw_options = parser.parse_args()
-    options = _patch_dataset_specific_options(copy.deepcopy(raw_options))
-    options = _patch_with_concrete_distributions(options)
+    raw_config = parser.parse_args()
+    config = _patch_dataset_specific_configs(copy.deepcopy(raw_config))
+    config = _patch_with_concrete_distributions(config)
     print(json.dumps(
-        _patch_dataset_specific_options(raw_options).__dict__,
+        _patch_dataset_specific_configs(raw_config).__dict__,
         sort_keys=True, indent=4
     ))
 
     # test argument sanity
-    assert options.z_sizes, 'noise latent code size must be defined'
-    assert options.z_distributions, (
+    assert config.z_sizes, 'noise latent code size must be defined'
+    assert config.z_distributions, (
         'noise latent code distributions must be defined'
     )
-    assert options.c_sizes, 'regularized latent code size must be defined'
-    assert options.c_distributions, (
+    assert config.c_sizes, 'regularized latent code size must be defined'
+    assert config.c_distributions, (
         'regularized latent code distributions must be defined'
     )
-    assert len(options.z_distributions) == len(options.z_sizes), (
+    assert len(config.z_distributions) == len(config.z_sizes), (
         'noise latent code specs(distributions and sizes) should be '
         'in same length.'
     )
-    assert len(options.c_distributions) == len(options.c_sizes), (
+    assert len(config.c_distributions) == len(config.c_sizes), (
         'regularized latent code specs(distributions and sizes) should be '
         'in same length.'
     )
 
     # compile the model
-    dcgan = InfoGAN(
-        z_distributions=options.z_distributions,
-        c_distributions=options.c_distributions,
-        batch_size=options.batch_size,
-        reg_rate=options.reg_rate,
-        image_size=options.image_size,
-        channel_size=options.channel_size,
-        q_hidden_size=options.q_hidden_size,
-        g_filter_number=options.g_filter_number,
-        d_filter_number=options.d_filter_number,
-        g_filter_size=options.g_filter_size,
-        d_filter_size=options.d_filter_size,
+    infogan = InfoGAN(
+        label=config.dataset,
+        z_distributions=config.z_distributions,
+        c_distributions=config.c_distributions,
+        batch_size=config.batch_size,
+        reg_rate=config.reg_rate,
+        image_size=config.image_size,
+        channel_size=config.channel_size,
+        q_hidden_size=config.q_hidden_size,
+        g_filter_number=config.g_filter_number,
+        d_filter_number=config.d_filter_number,
+        g_filter_size=config.g_filter_size,
+        d_filter_size=config.d_filter_size,
     )
 
-    # prepare the tensorflow session
-    session = tf.Session()
-
-    # test / train the model
-    if options.test:
-        # TODO: NOT IMPLEMENTED YET
-        print('TEST MODE NOT IMPLEMENTED YET')
+    # train / test the model
+    if config.train:
+        train(infogan, config)
     else:
-        train(session, dcgan, options)
+        with tf.Session() as sess:
+            name = '{}_test_figures'.format(infogan.name)
+            utils.load_checkpoint(sess, infogan, config)
+            utils.test_samples(sess, infogan, name, config)
+            print('=> generated test figures for {} at {}'.format(
+                infogan.name, os.path.join(config.sample_dir, name)
+            ))
 
 
 if __name__ == '__main__':

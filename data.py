@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import functools
 import struct
@@ -96,6 +97,14 @@ def image_dataset(batch_size, dirpath,
             yield batch_images
 
 
+def image_dataset_length(dirpath):
+    paths = [
+        os.path.join(dirpath, name) for name in os.listdir(dirpath) if
+        name.endswith('.jpg')
+    ]
+    return len(paths)
+
+
 @_dataset('mnist',
           image_size=32, channel_size=1,
           z_sizes=[100], z_distributions=['uniform'],
@@ -125,6 +134,17 @@ def mnist_dataset(batch_size, test=False):
             yield images[i:i+batch_size]
 
 
+def mnist_dataset_length(test=False):
+    if test:
+        fname_img = './data/mnist/val/t10k-images-idx3-ubyte'
+    else:
+        fname_img = './data/mnist/train/train-images-idx3-ubyte'
+
+    with open(fname_img, 'rb') as fd:
+        magic, num, rows, cols = struct.unpack('>IIII', fd.read(16))
+        return num
+
+
 @_dataset('lsun',
           image_size=256, channel_size=3,
           z_sizes=[100], z_distributions=['uniform'],
@@ -137,11 +157,22 @@ def lsun_dataset(batch_size, test=False, resize=False, use_crop=False):
     )
 
 
+def lsun_dataset_length(test=False):
+    path = './data/lsun/val' if test else './data/lsun/train'
+    return image_dataset_length(path)
+
+
 # datasets available out-of-the-box
 DATASETS = {
     mnist_dataset.name: mnist_dataset,
     lsun_dataset.name: lsun_dataset,
     image_dataset.name: image_dataset,
+}
+
+DATASET_LENGTH_GETTERS = {
+    mnist_dataset.name: mnist_dataset_length,
+    lsun_dataset.name: lsun_dataset_length,
+    image_dataset.name: image_dataset_length
 }
 
 
