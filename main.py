@@ -177,7 +177,7 @@ def _patch_with_concrete_distributions(args):
     return args
 
 
-def main(_):
+def main():
     # patch and display flags with dataset's width and height
     raw_config = parser.parse_args()
     config = _patch_dataset_specific_configs(copy.deepcopy(raw_config))
@@ -235,4 +235,4 @@ def main(_):
 
 
 if __name__ == '__main__':
-    tf.app.run()
+    main()
